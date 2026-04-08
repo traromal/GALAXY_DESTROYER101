@@ -14,7 +14,7 @@ from typing import Optional
 from core.app import GalaxyApp
 from core.state import Context, State
 from commands import get_commands, execute_command
-from services.api import create_client
+from services.api import Backend, create_client
 
 import commands.builtin
 import commands.git
@@ -41,11 +41,12 @@ def print_banner():
 class GalaxyCLI(GalaxyApp):
     """Full-featured CLI with AI integration"""
     
-    def __init__(self, model: str = "claude-opus-4-5-20251114"):
+    def __init__(self, model: str = "qwen2.5-coder", backend: str = "opencode"):
         super().__init__()
         self._setup_handlers()
         self._load_tools()
         self.context.model = model
+        self.context.backend = backend
     
     def _setup_handlers(self):
         self.on("command", self._handle_command)
@@ -75,6 +76,10 @@ class GalaxyCLI(GalaxyApp):
             self._list_tools()
             return
         
+        if cmd_name == "backend":
+            self._handle_backend(args)
+            return
+        
         if cmd_name.startswith("/"):
             cmd_name = cmd_name[1:]
         
@@ -84,6 +89,20 @@ class GalaxyCLI(GalaxyApp):
         else:
             self.mark_dirty()
     
+    def _handle_backend(self, args):
+        if not args:
+            backends = ["opencode", "ollama", "openai", "anthropic"]
+            self.add_output(f"Available backends: {', '.join(backends)}")
+            self.add_output(f"Current: {self.context.backend}")
+            return
+        
+        backend_name = args[0].lower()
+        if backend_name in ["opencode", "ollama", "openai", "anthropic"]:
+            self.context.backend = backend_name
+            self.add_output(f"Backend set to: {backend_name}")
+        else:
+            self.add_output(f"Unknown backend: {backend_name}")
+    
     def _handle_ai(self, args):
         if not args:
             self.add_output("Usage: ask <question>")
@@ -92,18 +111,27 @@ class GalaxyCLI(GalaxyApp):
         question = " ".join(args)
         self.add_output(f"[AI] Thinking about: {question}...")
         
-        if not self.context.auth_token:
-            self.add_output("[AI] No API key configured. Set ANTHROPIC_API_KEY")
+        if not self.context.backend:
+            self.add_output("[AI] No backend configured. Use: backend opencode")
             return
         
         asyncio.create_task(self._call_ai(question))
     
     async def _call_ai(self, question: str):
         try:
-            from services.api import create_client
-            from services.tools import get_executor
+            from services.api import create_client, Backend
             
-            client = create_client(self.context.auth_token)
+            backend_map = {
+                "opencode": Backend.OPENCODE,
+                "ollama": Backend.OLLAMA,
+                "openai": Backend.OPENAI,
+                "anthropic": Backend.ANTHROPIC,
+            }
+            
+            backend = backend_map.get(self.context.backend, Backend.OPENCODE)
+            api_key = os.environ.get(f"{self.context.backend.upper()}_API_KEY", "")
+            
+            client = create_client(api_key, backend=backend, model=self.context.model)
             executor = get_executor()
             tools_schema = executor.get_tools_schema()
             
@@ -187,35 +215,39 @@ class GalaxyCLI(GalaxyApp):
             "  ask <prompt>  - Ask AI a question",
             "  tool <name>   - Run a tool directly",
             "  tools         - List all tools",
+            "  backend       - Set backend (opencode, ollama, openai, anthropic)",
             "  status        - Show status",
             "  git           - Git commands",
             "",
-            "Tip: Set ANTHROPIC_API_KEY to use AI features",
+            "Tip: Default backend is OpenCode.ai - no API key needed!",
             ""
         ]
         for line in welcome:
             self.add_output(line)
 
 
-def interactive_mode(model: str = "claude-opus-4-5-20251114"):
+def interactive_mode(model: str = "qwen2.5-coder", backend: str = "opencode"):
     """Run in interactive TUI mode - beautiful Claude Code-like UI"""
     from tui import BeautifulTUI
     tui = BeautifulTUI()
     tui.run()
 
 
-def quick_ask(prompt: str, model: str = "claude-opus-4-5-20251114"):
+def quick_ask(prompt: str, model: str = "qwen2.5-coder", backend: str = "opencode"):
     """Quick ask mode - single query"""
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
-    if not api_key:
-        print("Error: ANTHROPIC_API_KEY not set")
-        return
+    api_key = os.environ.get(f"{backend.upper()}_API_KEY", "")
     
     async def ask():
-        from services.api import create_client
-        from services.tools import get_executor
+        from services.api import create_client, Backend
         
-        client = create_client(api_key)
+        backend_map = {
+            "opencode": Backend.OPENCODE,
+            "ollama": Backend.OLLAMA,
+            "openai": Backend.OPENAI,
+            "anthropic": Backend.ANTHROPIC,
+        }
+        
+        client = create_client(api_key, backend=backend_map.get(backend, Backend.OPENCODE), model=model)
         executor = get_executor()
         tools_schema = executor.get_tools_schema()
         
@@ -244,8 +276,17 @@ Examples:
   galaxy run "ls -la"      Run a shell command
   galaxy tool read_file path=README.md
   
+Backends:
+  opencode   - OpenCode.ai (default, free, no key needed)
+  ollama     - Local Ollama
+  openai     - OpenAI API
+  anthropic  - Anthropic Claude API
+
 Environment:
-  ANTHROPIC_API_KEY    Your Anthropic API key for AI features
+  OPENCODE_API_KEY    For OpenCode.ai (usually not needed)
+  OLLAMA_HOST         For local Ollama (default: localhost:11434)
+  OPENAI_API_KEY     For OpenAI
+  ANTHROPIC_API_KEY  For Claude
         """
     )
     
@@ -263,8 +304,15 @@ Environment:
     
     parser.add_argument(
         "-m", "--model",
-        default="claude-opus-4-5-20251114",
-        help="AI model to use (default: claude-opus-4-5-20251114)"
+        default="qwen2.5-coder",
+        help="AI model to use (default: qwen2.5-coder)"
+    )
+    
+    parser.add_argument(
+        "-b", "--backend",
+        default="opencode",
+        choices=["opencode", "ollama", "openai", "anthropic"],
+        help="AI backend to use (default: opencode)"
     )
     
     parser.add_argument(
@@ -285,10 +333,10 @@ Environment:
         return
     
     if args.api_key:
-        os.environ["ANTHROPIC_API_KEY"] = args.api_key
+        os.environ[f"{args.backend.upper()}_API_KEY"] = args.api_key
     
     if args.command == "ask" and args.args:
-        quick_ask(" ".join(args.args), args.model)
+        quick_ask(" ".join(args.args), args.model, args.backend)
     
     elif args.command == "run" and args.args:
         from services.tools import get_executor
@@ -330,7 +378,7 @@ Environment:
             print(f"  - {tool}")
     
     else:
-        interactive_mode(args.model)
+        interactive_mode(args.model, args.backend)
 
 
 if __name__ == "__main__":

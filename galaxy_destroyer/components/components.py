@@ -1,198 +1,396 @@
-"""Components package - reusable UI components"""
+"""Components - UI components for TUI"""
 
-from typing import Any, Optional, List, Dict, Callable
+from typing import List, Optional
 from dataclasses import dataclass
-from enum import Enum
-
-
-class ComponentType(Enum):
-    TEXT = "text"
-    BOX = "box"
-    BUTTON = "button"
-    INPUT = "input"
-    LIST = "list"
-    TABLE = "table"
-    PROGRESS = "progress"
-    SPINNER = "spinner"
 
 
 @dataclass
-class Component:
-    """Base component"""
-    type: ComponentType
-    props: Dict[str, Any]
-    children: List['Component'] = None
-    
-    def __post_init__(self):
-        if self.children is None:
-            self.children = []
-
-
-class Text(Component):
-    """Text component"""
-    def __init__(self, content: str, bold: bool = False, color: str = None, **props):
-        super().__init__(
-            type=ComponentType.TEXT,
-            props={"content": content, "bold": bold, "color": color, **props}
-        )
-
-
-class Box(Component):
-    """Box/frame component"""
-    def __init__(self, children: List[Component] = None, border: bool = True, 
-                 padding: int = 1, title: str = None, **props):
-        super().__init__(
-            type=ComponentType.BOX,
-            props={"border": border, "padding": padding, "title": title, **props},
-            children=children or []
-        )
-
-
-class Button(Component):
+class Button:
     """Button component"""
-    def __init__(self, label: str, on_click: Callable = None, disabled: bool = False, **props):
-        super().__init__(
-            type=ComponentType.BUTTON,
-            props={"label": label, "on_click": on_click, "disabled": disabled, **props}
-        )
-
-
-class Input(Component):
-    """Input component"""
-    def __init__(self, value: str = "", placeholder: str = "", on_change: Callable = None, **props):
-        super().__init__(
-            type=ComponentType.INPUT,
-            props={"value": value, "placeholder": placeholder, "on_change": on_change, **props}
-        )
-
-
-class List(Component):
-    """List component"""
-    def __init__(self, items: List[str] = None, selected: int = None, on_select: Callable = None, **props):
-        super().__init__(
-            type=ComponentType.LIST,
-            props={"items": items or [], "selected": selected, "on_select": on_select, **props}
-        )
-
-
-class Table(Component):
-    """Table component"""
-    def __init__(self, headers: List[str] = None, rows: List[List[str]] = None, **props):
-        super().__init__(
-            type=ComponentType.TABLE,
-            props={"headers": headers or [], "rows": rows or [], **props}
-        )
-
-
-class Progress(Component):
-    """Progress bar component"""
-    def __init__(self, value: float = 0, max: float = 100, show_label: bool = True, **props):
-        super().__init__(
-            type=ComponentType.PROGRESS,
-            props={"value": value, "max": max, "show_label": show_label, **props}
-        )
-
-
-class Spinner(Component):
-    """Spinner component"""
-    def __init__(self, message: str = "Loading...", **props):
-        super().__init__(
-            type=ComponentType.SPINNER,
-            props={"message": message, **props}
-        )
-
-
-class Renderable:
-    """Interface for renderable components"""
+    text: str
+    color: str = "blue"
+    hover_color: str = "cyan"
+    selected: bool = False
     
-    def render(self, width: int, height: int) -> List[str]:
-        raise NotImplementedError
+    def render(self) -> str:
+        from core.render import style
+        bg = self.hover_color if self.selected else self.color
+        return style(f" {self.text} ", bg_color=bg, color="white", bold=True)
 
 
-def render_component(comp: Component, width: int, height: int) -> List[str]:
-    """Render a component to strings"""
-    if comp.type == ComponentType.TEXT:
-        return [comp.props.get("content", "")]
-    elif comp.type == ComponentType.BOX:
-        return _render_box(comp, width, height)
-    elif comp.type == ComponentType.LIST:
-        return _render_list(comp, width)
-    elif comp.type == ComponentType.PROGRESS:
-        return _render_progress(comp, width)
-    elif comp.type == ComponentType.SPINNER:
-        return [comp.props.get("message", "Loading...")]
-    return []
+@dataclass
+class ListItem:
+    """List item component"""
+    text: str
+    icon: str = "•"
+    color: str = "white"
+    selected: bool = False
+    indent: int = 0
+    
+    def render(self) -> str:
+        from core.render import style
+        prefix = " " * self.indent + style(self.icon, color=self.color)
+        if self.selected:
+            prefix += style(" ▶", color="cyan")
+        return f"{prefix} {self.text}"
 
 
-def _render_box(box: Box, width: int, height: int) -> List[str]:
-    """Render a box component"""
-    lines = []
+class Menu:
+    """Menu component"""
     
-    if box.props.get("border", True):
-        lines.append("┌" + "─" * (width - 2) + "┐")
-        for i in range(height - 2):
-            lines.append("│" + " " * (width - 2) + "│")
-        lines.append("└" + "─" * (width - 2) + "┘")
-    else:
-        for i in range(height):
-            lines.append(" " * width)
+    def __init__(self, title: str, items: List[str]):
+        self.title = title
+        self.items = items
+        self.selected = 0
     
-    return lines
-
-
-def _render_list(lst: List, width: int) -> List[str]:
-    """Render a list component"""
-    lines = []
-    items = lst.props.get("items", [])
-    selected = lst.props.get("selected")
+    def select_next(self):
+        self.selected = (self.selected + 1) % len(self.items)
     
-    for i, item in enumerate(items):
-        prefix = "► " if i == selected else "  "
-        lines.append(prefix + item[:width - 2])
-    
-    return lines
-
-
-def _render_progress(prog: Progress, width: int) -> List[str]:
-    """Render a progress bar"""
-    value = prog.props.get("value", 0)
-    max_val = prog.props.get("max", 100)
-    show_label = prog.props.get("show_label", True)
-    
-    percentage = min(1.0, value / max_val)
-    filled = int((width - 4) * percentage)
-    
-    bar = "[" + "█" * filled + " " * (width - 4 - filled) + "]"
-    
-    if show_label:
-        label = f" {int(percentage * 100)}%"
-        bar = bar[:width - len(label)] + label
-    
-    return [bar]
-
-
-class Layout:
-    """Layout system for positioning components"""
-    
-    def __init__(self, width: int, height: int):
-        self.width = width
-        self.height = height
-        self._components: List[tuple] = []
-    
-    def add(self, comp: Component, x: int, y: int, w: int = None, h: int = None):
-        w = w or (self.width - x)
-        h = h or (self.height - y)
-        self._components.append((comp, x, y, w, h))
+    def select_prev(self):
+        self.selected = (self.selected - 1) % len(self.items)
     
     def render(self) -> List[str]:
-        output = [[" " for _ in range(self.width)] for _ in range(self.height)]
+        from core.render import style
         
-        for comp, x, y, w, h in self._components:
-            lines = render_component(comp, w, h)
-            for i, line in enumerate(lines):
-                if y + i < self.height:
-                    for j, char in enumerate(line):
-                        if x + j < self.width:
-                            output[y + i][x + j] = char
+        lines = []
+        lines.append(style(f" ╭─ {self.title} ────╮", color="cyan", bold=True))
         
-        return ["".join(row) for row in output]
+        for i, item in enumerate(self.items):
+            icon = "▶" if i == self.selected else " "
+            color = "cyan" if i == self.selected else "white"
+            lines.append(style(f" │{icon} {item}", color=color))
+        
+        lines.append(style(f" ╰─{'─' * len(self.title)}───╯", color="cyan", bold=True))
+        
+        return lines
+
+
+class Table:
+    """Table component"""
+    
+    def __init__(self, columns: List[str], rows: List[List[str]]):
+        self.columns = columns
+        self.rows = rows
+        self.col_widths = [len(c) for c in columns]
+        
+        for row in rows:
+            for i, cell in enumerate(row):
+                if i < len(self.col_widths):
+                    self.col_widths[i] = max(self.col_widths[i], len(cell))
+    
+    def render(self) -> List[str]:
+        from core.render import style
+        
+        lines = []
+        
+        header = " │ ".join(
+            c.ljust(w) for c, w in zip(self.columns, self.col_widths)
+        )
+        lines.append(style(f" {header} ", bg_color="blue", color="white", bold=True))
+        
+        sep = "─" * (len(header) + 2)
+        lines.append(style(sep, color="gray"))
+        
+        for row in self.rows:
+            cells = [c.ljust(w) if i < len(self.col_widths) else c 
+                    for i, c in enumerate(row)]
+            lines.append(" │ ".join(cells))
+        
+        return lines
+
+
+class Panel:
+    """Panel component"""
+    
+    def __init__(self, title: str, content: List[str], 
+                 width: int = 30, border: str = "cyan"):
+        self.title = title
+        self.content = content
+        self.width = width
+        self.border = border
+    
+    def render(self) -> List[str]:
+        from core.render import style, word_wrap
+        
+        lines = []
+        
+        title_line = f" {self.title} "
+        if len(title_line) < self.width - 2:
+            title_line = title_line.center(self.width - 2, "─")
+        
+        lines.append(style("╭" + title_line + "╮", color=self.border, bold=True))
+        
+        for line in self.content:
+            wrapped = word_wrap(line, self.width - 4)
+            for w in wrapped[:self.width - 6]:
+                lines.append(style("│ ", color=self.border) + w.ljust(self.width - 4))
+        
+        while len(lines) < 5:
+            lines.append(style("│", color=self.border) + " " * (self.width - 2))
+        
+        lines.append(style("╰" + "─" * (self.width - 2) + "╯", color=self.border, bold=True))
+        
+        return lines
+
+
+class Modal:
+    """Modal dialog component"""
+    
+    def __init__(self, title: str, message: str, 
+                 buttons: List[str] = None):
+        self.title = title
+        self.message = message
+        self.buttons = buttons or ["OK"]
+        self.selected = 0
+    
+    def select_next(self):
+        self.selected = (self.selected + 1) % len(self.buttons)
+    
+    def select_prev(self):
+        self.selected = (self.selected - 1) % len(self.buttons)
+    
+    def render(self) -> List[str]:
+        from core.render import style, word_wrap
+        
+        lines = []
+        
+        title_line = f" {self.title} "
+        width = 50
+        title_line = title_line.center(width - 2, "─")
+        
+        lines.append(style("╭" + title_line + "╮", color="cyan", bold=True))
+        lines.append(style("│", color="cyan") + " " * (width - 2) + style("│", color="cyan"))
+        
+        for line in word_wrap(self.message, width - 4):
+            lines.append(style("│ ", color="cyan") + line.ljust(width - 4) + style(" │", color="cyan"))
+        
+        lines.append(style("│", color="cyan") + " " * (width - 2) + style("│", color="cyan"))
+        
+        btn_str = " ".join(
+            style(f"[{b}]", color="cyan" if i == self.selected else "gray")
+            for i, b in enumerate(self.buttons)
+        )
+        lines.append(style("│ ", color="cyan") + btn_str.center(width - 4) + style(" │", color="cyan"))
+        
+        lines.append(style("╰" + "─" * (width - 2) + "╯", color="cyan", bold=True))
+        
+        return lines
+
+
+class Toast:
+    """Toast notification component"""
+    
+    def __init__(self, message: str, kind: str = "info"):
+        self.message = message
+        self.kind = kind
+    
+    def render(self) -> str:
+        from core.render import style
+        
+        color_map = {
+            "success": "green",
+            "error": "red",
+            "warning": "yellow",
+            "info": "cyan",
+        }
+        
+        icon_map = {
+            "success": "✓",
+            "error": "✗",
+            "warning": "⚠",
+            "info": "ℹ",
+        }
+        
+        icon = icon_map.get(self.kind, "ℹ")
+        color = color_map.get(self.kind, "white")
+        
+        return style(f" {icon} {self.message} ", color=color, bold=True)
+
+
+class StatusBar:
+    """Status bar component"""
+    
+    def __init__(self, items: List[str]):
+        self.items = items
+    
+    def render(self) -> str:
+        from core.render import style
+        
+        parts = []
+        
+        for item in self.items:
+            if isinstance(item, tuple):
+                icon, text, color = item[0], item[1], item[2] if len(item) > 2 else "white"
+                parts.append(style(icon, color=color) + " " + text)
+            else:
+                parts.append(item)
+        
+        return " │ ".join(parts)
+
+
+class Breadcrumb:
+    """Breadcrumb navigation"""
+    
+    def __init__(self, path: str):
+        self.path = path
+        self.parts = path.split("/")
+    
+    def render(self) -> str:
+        from core.render import style
+        
+        parts = []
+        
+        for i, part in enumerate(self.parts):
+            if i > 0:
+                parts.append(style(" / ", color="gray", dim=True))
+            if i == len(self.parts) - 1:
+                parts.append(style(part, color="cyan", bold=True))
+            else:
+                parts.append(part)
+        
+        return "".join(parts)
+
+
+class TabBar:
+    """Tab bar component"""
+    
+    def __init__(self, tabs: List[str]):
+        self.tabs = tabs
+        self.active = 0
+    
+    def set_active(self, index: int):
+        if 0 <= index < len(self.tabs):
+            self.active = index
+    
+    def render(self) -> str:
+        from core.render import style
+        
+        parts = []
+        
+        for i, tab in enumerate(self.tabs):
+            if i == self.active:
+                parts.append(style(f"[{tab}]", color="cyan", bold=True))
+            else:
+                parts.append(style(f"[{tab}]", color="gray"))
+        
+        return " ".join(parts)
+
+
+class Input:
+    """Input field component"""
+    
+    def __init__(self, placeholder: str = "", value: str = ""):
+        self.placeholder = placeholder
+        self.value = value
+        self.cursor = len(value)
+    
+    def render(self) -> str:
+        from core.render import style
+        
+        prompt = style(">", color="green", bold=True)
+        
+        text = self.value or style(self.placeholder, color="gray", dim=True)
+        
+        return f"{prompt} {text}"
+
+
+class Dropdown:
+    """Dropdown component"""
+    
+    def __init__(self, options: List[str], selected: int = 0):
+        self.options = options
+        self.selected = selected
+        self.open = False
+    
+    def toggle(self):
+        self.open = not self.open
+    
+    def select(self, index: int):
+        if 0 <= index < len(self.options):
+            self.selected = index
+            self.open = False
+    
+    def render(self) -> str:
+        from core.render import style
+        
+        text = self.options[self.selected]
+        
+        if self.open:
+            lines = [style(f"▾ {text}", color="cyan", bold=True)]
+            for i, opt in enumerate(self.options):
+                icon = "▶" if i == self.selected else " "
+                lines.append(style(f"  {icon} {opt}", color="cyan" if i == self.selected else "white"))
+            return "\n".join(lines)
+        else:
+            return style(f"▾ {text}", color="white")
+
+
+class Progress:
+    """Progress bar component"""
+    
+    def __init__(self, value: float, width: int = 20):
+        self.value = max(0, min(1, value))
+        self.width = width
+    
+    def render(self) -> str:
+        from core.render import style
+        
+        filled = int(self.width * self.value)
+        bar = "█" * filled + "░" * (self.width - filled)
+        percent = int(self.value * 100)
+        
+        return style(f"[{bar}] {percent}%", color="cyan")
+
+
+class Badge:
+    """Badge component"""
+    
+    def __init__(self, text: str, color: str = "blue"):
+        self.text = text
+        self.color = color
+    
+    def render(self) -> str:
+        from core.render import style
+        return style(f" {self.text} ", bg_color=self.color, color="white")
+
+
+class Tag:
+    """Tag component"""
+    
+    def __init__(self, text: str, color: str = "gray"):
+        self.text = text
+        self.color = color
+    
+    def render(self) -> str:
+        from core.render import style
+        return style(f"{self.text}", color=self.color)
+
+
+class Divider:
+    """Divider component"""
+    
+    def __init__(self, style: str = "line"):
+        self.style = style
+    
+    def render(self) -> str:
+        from core.render import style, get_terminal_size
+        width = get_terminal_size()[0]
+        
+        if self.style == "line":
+            return style("─" * width, color="gray", dim=True)
+        elif self.style == "double":
+            return style("═" * width, color="gray", dim=True)
+        elif self.style == "dotted":
+            return style("·" * width, color="gray", dim=True)
+        else:
+            return style("─" * width, color="gray", dim=True)
+
+
+class Spacer:
+    """Spacer component"""
+    
+    def __init__(self, height: int = 1):
+        self.height = height
+    
+    def render(self) -> str:
+        return "\n" * self.height

@@ -133,5 +133,3 @@ MIT License - See LICENSE file
 Contributions welcome! Please open an issue or submit a PR.
 
 ---
-
-<p align="center">Built with ❤️ by the Galaxy Team</p>

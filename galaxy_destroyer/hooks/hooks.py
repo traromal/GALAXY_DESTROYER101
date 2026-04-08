@@ -1,180 +1,197 @@
-"""Hooks package - reusable logic components"""
+"""Hooks system - event hooks for extensibility"""
 
-from typing import Any, Callable, Optional, Dict, List
-from dataclasses import dataclass
-import time
+import os
+from typing import Dict, Any, Callable, List, Optional
+from dataclasses import dataclass, field
+from enum import Enum
+
+
+class HookEvent(Enum):
+    """Available hook events"""
+    ON_START = "on_start"
+    ON_MESSAGE = "on_message"
+    ON_TOOL_START = "on_tool_start"
+    ON_TOOL_END = "on_tool_end"
+    ON_ERROR = "on_error"
+    ON_EXIT = "on_exit"
+    ON_SESSION_START = "on_session_start"
+    ON_SESSION_END = "on_session_end"
 
 
 @dataclass
 class Hook:
+    """A hook definition"""
+    event: HookEvent
     name: str
-    callback: Callable
+    script: str
     enabled: bool = True
+    description: str = ""
 
 
-class Hooks:
-    """Hook manager for events"""
+class HookManager:
+    """Manages hooks"""
     
     def __init__(self):
-        self._hooks: Dict[str, List[Hook]] = {}
+        self._hooks: Dict[HookEvent, List[Hook]] = {
+            event: [] for event in HookEvent
+        }
+        self._load_hooks()
     
-    def register(self, name: str, callback: Callable) -> None:
-        if name not in self._hooks:
-            self._hooks[name] = []
-        self._hooks[name].append(Hook(name=name, callback=callback))
+    def _load_hooks(self):
+        """Load hooks from config directory"""
+        hooks_dir = self._get_hooks_dir()
+        
+        if not os.path.isdir(hooks_dir):
+            return
+        
+        for filename in os.listdir(hooks_dir):
+            if filename.endswith(('.sh', '.py', '.js')):
+                self._load_hook_file(os.path.join(hooks_dir, filename))
     
-    def unregister(self, name: str, callback: Callable) -> None:
-        if name in self._hooks:
-            self._hooks[name] = [h for h in self._hooks[name] if h.callback != callback]
+    def _get_hooks_dir(self) -> str:
+        """Get hooks directory"""
+        return os.path.join(os.path.expanduser("~"), ".galaxy_destroyer", "hooks")
     
-    def trigger(self, name: str, *args, **kwargs) -> List[Any]:
-        results = []
-        if name in self._hooks:
-            for hook in self._hooks[name]:
-                if hook.enabled:
-                    try:
-                        result = hook.callback(*args, **kwargs)
-                        results.append(result)
-                    except Exception as e:
-                        pass
-        return results
+    def _load_hook_file(self, filepath: str):
+        """Load a hook from file"""
+        name = os.path.splitext(os.path.basename(filepath))[0]
+        
+        for event in HookEvent:
+            if event.value in name:
+                hook = Hook(
+                    event=event,
+                    name=name,
+                    script=filepath,
+                    description=f"Loaded from {filepath}",
+                )
+                self._hooks[event].append(hook)
+                break
     
-    def enable(self, name: str) -> None:
-        if name in self._hooks:
-            for hook in self._hooks[name]:
-                hook.enabled = True
+    def register_hook(self, event: HookEvent, hook: Hook):
+        """Register a hook"""
+        if event not in self._hooks:
+            self._hooks[event] = []
+        self._hooks[event].append(hook)
     
-    def disable(self, name: str) -> None:
-        if name in self._hooks:
-            for hook in self._hooks[name]:
-                hook.enabled = False
+    def get_hooks(self, event: HookEvent) -> List[Hook]:
+        """Get hooks for an event"""
+        return [h for h in self._hooks.get(event, []) if h.enabled]
     
-    def clear(self, name: str = None) -> None:
-        if name:
-            self._hooks[name] = []
-        else:
-            self._hooks.clear()
+    def enable_hook(self, name: str) -> bool:
+        """Enable a hook by name"""
+        for hooks in self._hooks.values():
+            for hook in hooks:
+                if hook.name == name:
+                    hook.enabled = True
+                    return True
+        return False
+    
+    def disable_hook(self, name: str) -> bool:
+        """Disable a hook by name"""
+        for hooks in self._hooks.values():
+            for hook in hooks:
+                if hook.name == name:
+                    hook.enabled = False
+                    return True
+        return False
+    
+    def list_hooks(self) -> List[Dict]:
+        """List all hooks"""
+        result = []
+        for event, hooks in self._hooks.items():
+            for hook in hooks:
+                result.append({
+                    "name": hook.name,
+                    "event": event.value,
+                    "enabled": hook.enabled,
+                    "script": hook.script,
+                    "description": hook.description,
+                })
+        return result
 
 
-_hooks = Hooks()
+_hook_manager: Optional[HookManager] = None
 
 
-def get_hooks() -> Hooks:
-    return _hooks
+def get_hook_manager() -> HookManager:
+    """Get global hook manager"""
+    global _hook_manager
+    if _hook_manager is None:
+        _hook_manager = HookManager()
+    return _hook_manager
 
 
-def register_hook(name: str, callback: Callable) -> None:
-    _hooks.register(name, callback)
-
-
-def trigger_hook(name: str, *args, **kwargs) -> List[Any]:
-    return _hooks.trigger(name, *args, **kwargs)
-
-
-class UseState:
-    """Simple state hook"""
+async def trigger_hook(event: HookEvent, context: Dict[str, Any] = None):
+    """Trigger hooks for an event"""
+    hooks = get_hook_manager().get_hooks(event)
     
-    def __init__(self, initial: Any = None):
-        self._value = initial
-    
-    def get(self) -> Any:
-        return self._value
-    
-    def set(self, value: Any) -> None:
-        self._value = value
-    
-    def update(self, fn: Callable[[Any], Any]) -> None:
-        self._value = fn(self._value)
+    for hook in hooks:
+        try:
+            await run_hook_script(hook.script, event.value, context or {})
+        except Exception as e:
+            print(f"Hook error: {hook.name}: {e}")
 
 
-class UseEffect:
-    """Effect hook - runs after render"""
+async def run_hook_script(script: str, event: str, context: Dict) -> bool:
+    """Run a hook script"""
+    import subprocess
     
-    def __init__(self, effect: Callable, deps: List = None):
-        self.effect = effect
-        self.deps = deps or []
-        self._last_run = None
-    
-    def should_run(self) -> bool:
-        if self._last_run is None:
-            return True
-        if self.deps:
-            return False
-        return True
-    
-    def run(self) -> None:
-        if self.should_run():
-            self.effect()
-            self._last_run = time.time()
+    try:
+        env = os.environ.copy()
+        for key, value in context.items():
+            env[f"GALAXY_{key.upper()}"] = str(value)
+        
+        result = subprocess.run(
+            [script],
+            env=env,
+            capture_output=True,
+            timeout=30,
+        )
+        return result.returncode == 0
+    except:
+        return False
 
 
-class UseCallback:
-    """Callback hook - memoized function"""
-    
-    def __init__(self, fn: Callable, deps: List = None):
-        self.fn = fn
-        self.deps = deps or []
-    
-    def __call__(self, *args, **kwargs):
-        return self.fn(*args, **kwargs)
+def on_start():
+    """Trigger on start hooks"""
+    import asyncio
+    asyncio.create_task(trigger_hook(HookEvent.ON_START))
 
 
-class UseMemo:
-    """Memoized value hook"""
-    
-    def __init__(self, compute: Callable, deps: List = None):
-        self.compute = compute
-        self.deps = deps or []
-        self._value = None
-        self._computed = False
-    
-    def get(self) -> Any:
-        if not self._computed:
-            self._value = self.compute()
-            self._computed = True
-        return self._value
+def on_message(message: str):
+    """Trigger on message hooks"""
+    import asyncio
+    asyncio.create_task(trigger_hook(HookEvent.ON_MESSAGE, {"message": message}))
 
 
-class UseInterval:
-    """Interval hook"""
-    
-    def __init__(self, callback: Callable, delay: float):
-        self.callback = callback
-        self.delay = delay
-        self._running = False
-    
-    def start(self) -> None:
-        self._running = True
-    
-    def stop(self) -> None:
-        self._running = False
+def on_tool_start(tool_name: str, tool_input: Dict):
+    """Trigger on tool start hooks"""
+    import asyncio
+    asyncio.create_task(trigger_hook(
+        HookEvent.ON_TOOL_START, 
+        {"tool": tool_name, "input": tool_input}
+    ))
 
 
-class UseDebounce:
-    """Debounce hook"""
-    
-    def __init__(self, value: Any, delay: float):
-        self.value = value
-        self.delay = delay
-        self._debounced = value
-        self._last_update = time.time()
-    
-    def get(self) -> Any:
-        if time.time() - self._last_update > self.delay:
-            self._debounced = self.value
-        return self._debounced
+def on_tool_end(tool_name: str, result: Any):
+    """Trigger on tool end hooks"""
+    import asyncio
+    asyncio.create_task(trigger_hook(
+        HookEvent.ON_TOOL_END,
+        {"tool": tool_name, "result": str(result)}
+    ))
 
 
-class UseThrottle:
-    """Throttle hook"""
-    
-    def __init__(self, callback: Callable, delay: float):
-        self.callback = callback
-        self.delay = delay
-        self._last_call = 0
-    
-    def call(self, *args, **kwargs) -> None:
-        now = time.time()
-        if now - self._last_call >= self.delay:
-            self.callback(*args, **kwargs)
-            self._last_call = now
+def on_error(error: Exception):
+    """Trigger on error hooks"""
+    import asyncio
+    asyncio.create_task(trigger_hook(
+        HookEvent.ON_ERROR,
+        {"error": str(error), "type": type(error).__name__}
+    ))
+
+
+def on_exit():
+    """Trigger on exit hooks"""
+    import asyncio
+    asyncio.create_task(trigger_hook(HookEvent.ON_EXIT))

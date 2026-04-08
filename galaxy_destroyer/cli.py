@@ -13,6 +13,7 @@ from typing import Optional
 
 from core.app import GalaxyApp
 from core.state import Context, State
+from core.bootstrap import build_full_system_prompt, format_welcome_message, format_status, SessionInfo
 from commands import get_commands, execute_command
 from services.api import Backend, create_client
 
@@ -45,8 +46,11 @@ class GalaxyCLI(GalaxyApp):
         super().__init__()
         self._setup_handlers()
         self._load_tools()
+        self._load_config()
         self.context.model = model
         self.context.backend = backend
+        self.session = SessionInfo.create()
+        self._system_prompt = None
     
     def _setup_handlers(self):
         self.on("command", self._handle_command)
@@ -55,6 +59,21 @@ class GalaxyCLI(GalaxyApp):
     def _load_tools(self):
         from services.tools import get_executor
         self._tool_executor = get_executor()
+    
+    def _load_config(self):
+        from services.config import get_config
+        config = get_config()
+        if config.get("vim_mode"):
+            self.context.vim_mode = True
+    
+    def get_system_prompt(self) -> str:
+        """Get the system prompt for AI"""
+        if self._system_prompt is None:
+            self._system_prompt = build_full_system_prompt(
+                model=self.context.model,
+                backend=self.context.backend,
+            )
+        return self._system_prompt
     
     def _handle_command(self, cmd: str):
         parts = cmd.split()
@@ -76,8 +95,28 @@ class GalaxyCLI(GalaxyApp):
             self._list_tools()
             return
         
+        if cmd_name == "agents":
+            self._list_agents()
+            return
+        
         if cmd_name == "backend":
             self._handle_backend(args)
+            return
+        
+        if cmd_name == "model":
+            self._handle_model(args)
+            return
+        
+        if cmd_name in ("status", "session"):
+            self._show_status()
+            return
+        
+        if cmd_name in ("help", "?"):
+            self._show_help()
+            return
+        
+        if cmd_name in ("clear", "reset"):
+            self._clear_session()
             return
         
         if cmd_name.startswith("/"):
@@ -89,6 +128,65 @@ class GalaxyCLI(GalaxyApp):
         else:
             self.mark_dirty()
     
+    def _handle_model(self, args):
+        if not args:
+            self.add_output(f"Current model: {self.context.model}")
+            self.add_output("Available: qwen2.5-coder, llama3, gpt-4, claude-opus-4-5-20251114")
+            return
+        
+        model = args[0]
+        self.context.model = model
+        self._system_prompt = None
+        self.add_output(f"Model set to: {model}")
+    
+    def _show_status(self):
+        status = format_status(self.context.model, self.context.backend, self.session)
+        self.add_output(status)
+    
+    def _show_help(self):
+        help_text = """
+=== Galaxy Destroyer Commands ===
+
+AI Commands:
+  ask <prompt>     - Ask AI a question
+  chat             - Start conversation mode
+  agents           - List available agents
+
+Tool Commands:
+  tool <name>      - Run a tool directly
+  tools            - List all available tools
+
+Configuration:
+  backend <name>   - Set backend (opencode, ollama, openai, anthropic)
+  model <name>     - Set model
+  config           - Show configuration
+
+Session:
+  status           - Show current status
+  clear            - Clear conversation history
+
+Git Commands:
+  git status       - Show git status
+  git log          - Show commit history
+  git diff         - Show changes
+  git commit       - Commit changes
+
+Task Commands:
+  task create      - Create a task
+  task list        - List tasks
+  task update      - Update task
+
+Other:
+  help             - Show this help
+  exit             - Exit Galaxy Destroyer
+"""
+        self.add_output(help_text)
+    
+    def _clear_session(self):
+        self._message_history = []
+        self._system_prompt = None
+        self.add_output("Conversation cleared!")
+    
     def _handle_backend(self, args):
         if not args:
             backends = ["opencode", "ollama", "openai", "anthropic"]
@@ -99,6 +197,7 @@ class GalaxyCLI(GalaxyApp):
         backend_name = args[0].lower()
         if backend_name in ["opencode", "ollama", "openai", "anthropic"]:
             self.context.backend = backend_name
+            self._system_prompt = None
             self.add_output(f"Backend set to: {backend_name}")
         else:
             self.add_output(f"Unknown backend: {backend_name}")
@@ -144,8 +243,10 @@ class GalaxyCLI(GalaxyApp):
                 )
                 return result
             
+            system_prompt = self.get_system_prompt()
+            
             response = await client.send_message(
-                system_prompt="You are Galaxy Destroyer, a helpful AI assistant.",
+                system_prompt=system_prompt,
                 tools=tools_schema,
                 on_tool_use=on_tool
             )
@@ -195,6 +296,13 @@ class GalaxyCLI(GalaxyApp):
         for tool in sorted(tools):
             self.add_output(f"  - {tool}")
     
+    def _list_agents(self):
+        from services.agents import list_agents
+        agents = list_agents()
+        self.add_output("Available agents:")
+        for name, desc in agents.items():
+            self.add_output(f"  {name}: {desc}")
+    
     def _handle_completion(self, partial: str):
         registry = get_commands()
         
@@ -207,22 +315,8 @@ class GalaxyCLI(GalaxyApp):
             self.add_output(f"Suggestions: {suggestions}")
     
     def show_welcome(self):
-        welcome = [
-            "Welcome to Galaxy Destroyer!",
-            "",
-            "Commands:",
-            "  help          - Show help",
-            "  ask <prompt>  - Ask AI a question",
-            "  tool <name>   - Run a tool directly",
-            "  tools         - List all tools",
-            "  backend       - Set backend (opencode, ollama, openai, anthropic)",
-            "  status        - Show status",
-            "  git           - Git commands",
-            "",
-            "Tip: Default backend is OpenCode.ai - no API key needed!",
-            ""
-        ]
-        for line in welcome:
+        welcome = format_welcome_message(self.context.model, self.context.backend)
+        for line in welcome.split("\n"):
             self.add_output(line)
 
 
@@ -239,6 +333,7 @@ def quick_ask(prompt: str, model: str = "qwen2.5-coder", backend: str = "opencod
     
     async def ask():
         from services.api import create_client, Backend
+        from services.tools import get_executor
         
         backend_map = {
             "opencode": Backend.OPENCODE,
@@ -247,6 +342,8 @@ def quick_ask(prompt: str, model: str = "qwen2.5-coder", backend: str = "opencod
             "anthropic": Backend.ANTHROPIC,
         }
         
+        system_prompt = build_full_system_prompt(model, backend)
+        
         client = create_client(api_key, backend=backend_map.get(backend, Backend.OPENCODE), model=model)
         executor = get_executor()
         tools_schema = executor.get_tools_schema()
@@ -254,7 +351,7 @@ def quick_ask(prompt: str, model: str = "qwen2.5-coder", backend: str = "opencod
         print(f"\nAsking: {prompt}\n")
         
         response = await client.send_message(
-            system_prompt="You are Galaxy Destroyer, a helpful AI assistant.",
+            system_prompt=system_prompt,
             tools=tools_schema,
         )
         
@@ -275,6 +372,7 @@ Examples:
   galaxy ask "hello"       Ask AI a quick question
   galaxy run "ls -la"      Run a shell command
   galaxy tool read_file path=README.md
+  galaxy -b ollama ask "debug this"
   
 Backends:
   opencode   - OpenCode.ai (default, free, no key needed)
@@ -305,14 +403,14 @@ Environment:
     parser.add_argument(
         "-m", "--model",
         default="qwen2.5-coder",
-        help="AI model to use (default: qwen2.5-coder)"
+        help="AI model to use"
     )
     
     parser.add_argument(
         "-b", "--backend",
         default="opencode",
         choices=["opencode", "ollama", "openai", "anthropic"],
-        help="AI backend to use (default: opencode)"
+        help="AI backend to use"
     )
     
     parser.add_argument(
@@ -376,6 +474,13 @@ Environment:
         print("Available tools:")
         for tool in tools:
             print(f"  - {tool}")
+    
+    elif args.command == "agents":
+        from services.agents import list_agents
+        agents = list_agents()
+        print("Available agents:")
+        for name, desc in agents.items():
+            print(f"  {name}: {desc}")
     
     else:
         interactive_mode(args.model, args.backend)

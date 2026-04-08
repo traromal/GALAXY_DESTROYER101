@@ -29,12 +29,22 @@ class Context:
     backend: str = "opencode"
     stream: bool = True
     color: bool = True
+    vim_mode: bool = False
+    temperature: float = 0.7
+    max_tokens: int = 4096
+    api_key: Optional[str] = None
     
     def add_message(self, role: str, content: str):
         self.messages.append({"role": role, "content": content, "timestamp": time.time()})
     
     def add_tool_result(self, tool_name: str, result: Any):
         self.messages.append({"role": "tool", "tool": tool_name, "result": result, "timestamp": time.time()})
+    
+    def get_messages(self) -> list:
+        return self.messages
+    
+    def clear_messages(self):
+        self.messages.clear()
 
 
 @dataclass

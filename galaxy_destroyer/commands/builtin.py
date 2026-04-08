@@ -79,6 +79,81 @@ def cmd_exit(args=None, app=None):
 
 
 @register_command(
+    name="status",
+    description="Show current status",
+    category=CommandCategory.GENERAL
+)
+def cmd_status(args=None, app=None):
+    if not app:
+        return "Status: Not in interactive mode"
+    
+    lines = [
+        "=== Galaxy Destroyer Status ===",
+        f"Backend: {app.context.backend}",
+        f"Model: {app.context.model}",
+        f"Vim Mode: {'On' if app.context.vim_mode else 'Off'}",
+        f"Messages: {len(app.context.messages)}",
+    ]
+    
+    if hasattr(app, 'session'):
+        lines.append(f"Session: {app.session.id}")
+        lines.append(f"Project: {app.session.project_dir}")
+        lines.append(f"Git: {'Yes (' + app.session.git_branch + ')' if app.session.is_git else 'No'}")
+    
+    return "\n".join(lines)
+
+
+@register_command(
+    name="config",
+    description="Show or set configuration",
+    category=CommandCategory.GENERAL,
+    usage="config [key [value]]",
+    examples=["config", "config backend opencode", "config model llama3"]
+)
+def cmd_config(args=None, app=None):
+    from services.config import get_config, set_config
+    
+    if not args:
+        config = get_config()
+        lines = ["=== Configuration ==="]
+        for key, value in config.items():
+            if key != "api_key":
+                lines.append(f"{key}: {value}")
+        return "\n".join(lines)
+    
+    key = args[0]
+    
+    if len(args) == 1:
+        value = get_config(key)
+        return f"{key}: {value}"
+    
+    value = args[1]
+    set_config(key, value)
+    return f"Set {key} = {value}"
+
+
+@register_command(
+    name="session",
+    description="Manage session",
+    category=CommandCategory.GENERAL,
+    aliases=["clear-session"]
+)
+def cmd_session(args=None, app=None):
+    if not app:
+        return "Not in interactive mode"
+    
+    if hasattr(app, 'session'):
+        app.session = None
+    
+    app.context.clear_messages()
+    
+    if hasattr(app, '_system_prompt'):
+        app._system_prompt = None
+    
+    return "Session cleared!"
+
+
+@register_command(
     name="ls",
     description="List directory contents",
     category=CommandCategory.FILE,

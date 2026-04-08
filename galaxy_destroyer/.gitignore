@@ -1,6 +1,4 @@
-# Ignore everything
-*
-
-# But not these
+# Include everything in galaxy_destroyer folder
 !.gitignore
-!galaxy_destroyer/
+!*/
+!*.*

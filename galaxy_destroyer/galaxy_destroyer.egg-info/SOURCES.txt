@@ -1,0 +1,8 @@
+README.md
+setup.py
+galaxy_destroyer.egg-info/PKG-INFO
+galaxy_destroyer.egg-info/SOURCES.txt
+galaxy_destroyer.egg-info/dependency_links.txt
+galaxy_destroyer.egg-info/entry_points.txt
+galaxy_destroyer.egg-info/requires.txt
+galaxy_destroyer.egg-info/top_level.txt

@@ -1,0 +1,3 @@
+[console_scripts]
+galaxy = galaxy_destroyer.cli:main
+gd = galaxy_destroyer.cli:main

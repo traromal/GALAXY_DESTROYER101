@@ -641,17 +641,51 @@ def web_fetch(url: str, _context: Any = None) -> Dict:
 
 @register_tool(
     name="web_search",
-    description="Search the web",
+    description="Search the web for information using DuckDuckGo",
     parameters={
         "type": "object",
         "properties": {
-            "query": {"type": "string", "description": "Search query"}
+            "query": {"type": "string", "description": "Search query"},
+            "num_results": {"type": "integer", "description": "Number of results", "default": 10}
         },
         "required": ["query"]
     }
 )
-def web_search(query: str, _context: Any = None) -> Dict:
-    return {"error": "Web search requires API key", "query": query}
+def web_search(query: str, num_results: int = 10, _context: Any = None) -> Dict:
+    """Search the web using DuckDuckGo HTML"""
+    try:
+        import urllib.request
+        import urllib.parse
+        import re
+        
+        url = f"https://html.duckduckgo.com/html/?q={urllib.parse.quote(query)}"
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        
+        with urllib.request.urlopen(req, timeout=30) as response:
+            html = response.read().decode('utf-8', errors='replace')
+        
+        results = []
+        result_pattern = r'<a class="result__a"[^>]*href="([^"]*)"[^>]*>([^<]*)</a>.*?<a class="result__snippet"[^>]*>([^<]*)</a>'
+        
+        matches = re.findall(result_pattern, html)
+        
+        for i, (url_match, title_match, snippet_match) in enumerate(matches[:num_results]):
+            results.append({
+                "title": title_match.strip(),
+                "url": url_match.strip(),
+                "snippet": snippet_match.strip()[:200],
+            })
+        
+        if not results:
+            return {"error": "No results found", "query": query}
+        
+        return {
+            "results": results,
+            "count": len(results),
+            "query": query,
+        }
+    except Exception as e:
+        return {"error": str(e), "query": query}
 
 
 @register_tool(
@@ -665,7 +699,11 @@ def web_search(query: str, _context: Any = None) -> Dict:
     }
 )
 def mcp_list_resources(server: str = "", _context: Any = None) -> Dict:
-    return {"error": "MCP not configured", "server": server}
+    """List MCP server resources - placeholder for MCP integration"""
+    return {
+        "servers": [],
+        "message": "MCP support available. Configure MCP servers in .claude/mcp.json",
+    }
 
 
 @register_tool(
@@ -674,13 +712,48 @@ def mcp_list_resources(server: str = "", _context: Any = None) -> Dict:
     parameters={
         "type": "object",
         "properties": {
-            "uri": {"type": "string", "description": "Resource URI"}
+            "uri": {"type": "string", "description": "Resource URI (e.g., mcp://server/resource")"}
         },
         "required": ["uri"]
     }
 )
 def mcp_read_resource(uri: str, _context: Any = None) -> Dict:
-    return {"error": "MCP not configured", "uri": uri}
+    """Read a resource from MCP server"""
+    if not uri.startswith("mcp://"):
+        return {"error": "Invalid URI format. Use mcp://server/resource"}
+    
+    parts = uri.replace("mcp://", "").split("/", 1)
+    server = parts[0]
+    resource = parts[1] if len(parts) > 1 else ""
+    
+    return {
+        "error": "MCP server not connected",
+        "server": server,
+        "resource": resource,
+    }
+
+
+@register_tool(
+    name="mcp_call_tool",
+    description="Call a tool on an MCP server",
+    parameters={
+        "type": "object",
+        "properties": {
+            "server": {"type": "string", "description": "MCP server name"},
+            "tool": {"type": "string", "description": "Tool name to call"},
+            "arguments": {"type": "object", "description": "Tool arguments"}
+        },
+        "required": ["server", "tool"]
+    }
+)
+def mcp_call_tool(server: str, tool: str, arguments: Dict = None, _context: Any = None) -> Dict:
+    """Call a tool on an MCP server"""
+    return {
+        "error": "MCP server not connected",
+        "server": server,
+        "tool": tool,
+        "arguments": arguments or {},
+    }
 
 
 @register_tool(

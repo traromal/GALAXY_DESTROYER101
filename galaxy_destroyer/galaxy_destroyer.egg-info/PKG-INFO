@@ -1,0 +1,16 @@
+Metadata-Version: 2.4
+Name: galaxy-destroyer
+Version: 0.1.0
+Summary: AI-powered terminal assistant - Claude Code equivalent
+Author: Galaxy Team
+Author-email: team@galaxy.dev
+License: MIT
+Requires-Python: >=3.10
+Requires-Dist: prompt_toolkit>=3.0.40
+Requires-Dist: requests>=2.31.0
+Dynamic: author
+Dynamic: author-email
+Dynamic: license
+Dynamic: requires-dist
+Dynamic: requires-python
+Dynamic: summary

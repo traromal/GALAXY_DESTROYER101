@@ -1,11 +1,12 @@
-"""Enhanced TUI - Beautiful Claude Code-like interface with full features"""
+"""Enhanced TUI - Full Claude Code-like interface"""
 
 import os
 import sys
 import time
 import asyncio
 import threading
-from typing import Optional, List, Dict, Any, Callable
+import subprocess
+from typing import Optional, List, Dict, Any
 from dataclasses import dataclass, field
 from enum import Enum
 
@@ -35,16 +36,16 @@ class ToolUse:
     result: Optional[str] = None
 
 
-class MessageType(Enum):
-    TEXT = "text"
-    TOOL_USE = "tool_use"
-    TOOL_RESULT = "tool_result"
-    ERROR = "error"
-    SYSTEM = "system"
+class SidebarPanel(Enum):
+    SESSION = "session"
+    TOOLS = "tools"
+    FILES = "files"
+    GIT = "git"
+    HELP = "help"
 
 
 class BeautifulTUI:
-    """Beautiful Claude Code-like terminal UI with full features"""
+    """Full-featured Claude Code-like terminal UI"""
     
     def __init__(self):
         self.context = Context()
@@ -54,27 +55,28 @@ class BeautifulTUI:
         self.running = False
         self.width = 80
         self.height = 24
+        self.sidebar_width = 25
         self._needs_render = True
         self._loading = False
         self._loading_text = ""
         self._loading_dots = 0
         self._tool_uses: List[ToolUse] = []
-        self._show_sidebar = False
-        self._sidebar_content: List[str] = []
+        self._show_sidebar = True
+        self._sidebar_panel = SidebarPanel.SESSION
         self._input_line = 0
         self._thinking = False
-        self._thinking_text = ""
         self._status_bar_items: List[str] = []
-        self._keybindings_mode = False
-        self._vim_mode = False
-        self._command_mode = False
         self._search_mode = False
         self._search_query = ""
+        self._autocomplete_options: List[str] = []
+        self._autocomplete_index = 0
+        self._file_tree_cache = {}
     
     def run(self):
         """Main run loop"""
         self.running = True
         self.width, self.height = get_terminal_size()
+        self._ensure_width()
         
         try:
             self._setup()
@@ -87,6 +89,11 @@ class BeautifulTUI:
         finally:
             self._cleanup()
     
+    def _ensure_width(self):
+        """Ensure minimum width"""
+        if self.width < 60:
+            self.width = 60
+    
     def _setup(self):
         """Setup terminal"""
         if os.name == 'nt':
@@ -94,62 +101,49 @@ class BeautifulTUI:
             msvcrt.setmode(sys.stdin.fileno(), os.O_BINARY)
         self.context.cwd = os.getcwd()
         self._update_status_bar()
+        self._refresh_file_tree()
     
     def _update_status_bar(self):
-        """Update status bar items"""
+        """Update status bar"""
         self._status_bar_items = [
             f"cwd: {os.path.basename(self.context.cwd)}",
-            f"backend: {self.context.backend}",
-            f"model: {self.context.model}",
+            f"{self.context.backend}:{self.context.model}",
         ]
+    
+    def _refresh_file_tree(self):
+        """Refresh file tree cache"""
+        try:
+            tree = self._build_file_tree(self.context.cwd, depth=2)
+            self._file_tree_cache = tree
+        except:
+            self._file_tree_cache = {}
+    
+    def _build_file_tree(self, path: str, depth: int = 2) -> Dict:
+        """Build file tree"""
+        tree = {"name": os.path.basename(path) or path, "type": "dir", "children": []}
+        
+        if depth <= 0:
+            return tree
+        
+        try:
+            entries = sorted(os.listdir(path), key=lambda x: (not os.path.isdir(os.path.join(path, x)), x))
+            for entry in entries[:15]:
+                if entry.startswith('.'):
+                    continue
+                entry_path = os.path.join(path, entry)
+                if os.path.isdir(entry_path):
+                    tree["children"].append(self._build_file_tree(entry_path, depth - 1))
+                else:
+                    tree["children"].append({"name": entry, "type": "file"})
+        except:
+            pass
+        
+        return tree
     
     def _show_welcome(self):
         """Show welcome banner"""
         clear_screen()
-        
-        self._draw_header()
-        
-        cat_logo = """
-      /\\_/\\  
-     ( o.o ) 
-     (")_(") 
-"""
-        
-        welcome_box = [
-            style(cat_logo, color="cyan"),
-            "",
-            style("   ╔═══════════════════════════════════════════════════╗", color="cyan"),
-            style("   ║        Galaxy Destroyer v0.1.0                   ║", color="cyan", bold=True),
-            style("   ║        AI-Powered Terminal Assistant             ║", dim=True),
-            style("   ╚═══════════════════════════════════════════════════╝", color="cyan"),
-            "",
-            style("   Getting Started:", bold=True, color="yellow"),
-            "",
-            "   " + style("ask <message>", color="green") + "  - Chat with AI",
-            "   " + style("tool <name>", color="green") + "   - Run a tool directly",
-            "   " + style("run <cmd>", color="green") + "    - Execute shell command",
-            "   " + style("agents", color="green") + "       - List available agents",
-            "   " + style("tasks", color="green") + "        - List tasks",
-            "   " + style("clear", color="green") + "        - Clear conversation",
-            "   " + style("help", color="green") + "         - Show all commands",
-            "",
-            style("   Shortcuts:", bold=True, color="yellow"),
-            "",
-            "   " + style("Ctrl+C", color="magenta") + "     - Exit",
-            "   " + style("Ctrl+L", color="magenta") + "     - Clear screen",
-            "   " + style("Ctrl+G", color="magenta") + "     - Toggle sidebar",
-            "   " + style("Ctrl+T", color="magenta") + "     - Toggle thinking",
-            "   " + style("Tab", color="magenta") + "       - Autocomplete",
-            "",
-            style("   Default: OpenCode.ai backend (no API key needed!)", dim=True, color="gray"),
-            "",
-        ]
-        
-        for line in welcome_box:
-            write_line(line)
-        
-        self._draw_input_prompt()
-        move_cursor(1, self.height)
+        self._render()
     
     def _main_loop(self):
         """Main loop"""
@@ -180,8 +174,11 @@ class BeautifulTUI:
         """Render loading indicator"""
         dots = "." * self._loading_dots
         loading_text = f" {self._loading_text}{dots}"
+        
+        content_width = self.width - self.sidebar_width - 1 if self._show_sidebar else self.width
+        
         move_cursor(1, self.height - 1)
-        write(" " * self.width)
+        write(" " * content_width)
         move_cursor(1, self.height - 1)
         write(style(loading_text, color="cyan", blink=True))
     
@@ -196,11 +193,8 @@ class BeautifulTUI:
             return
         
         if key.name == "escape":
-            if self._vim_mode:
-                self._vim_mode = False
-                self.state.mode = "normal"
-            self._keybindings_mode = False
             self._search_mode = False
+            self._autocomplete_options = []
             return
         
         if key.name == "ctrl_l":
@@ -216,6 +210,14 @@ class BeautifulTUI:
             self._thinking = not self._thinking
             return
         
+        if key.name == "ctrl_s":
+            self._cycle_sidebar_panel()
+            return
+        
+        if key.name == "ctrl_f":
+            self._toggle_file_tree()
+            return
+        
         if key.name == "ctrl_u":
             self.state.input_buffer = ""
             self._render_input_line()
@@ -229,58 +231,152 @@ class BeautifulTUI:
             return
         
         if key.name == "enter":
-            self._execute_input()
+            if self._autocomplete_options:
+                self._select_autocomplete()
+            else:
+                self._execute_input()
             return
         
         if key.name == "backspace":
             if self.state.input_buffer:
                 self.state.input_buffer = self.state.input_buffer[:-1]
+                self._update_autocomplete()
                 self._render_input_line()
             return
         
         if key.name == "up":
-            self._history_previous()
+            if self._autocomplete_options:
+                self._autocomplete_index = (self._autocomplete_index - 1) % len(self._autocomplete_options)
+                self._render_autocomplete()
+            else:
+                self._history_previous()
             return
         
         if key.name == "down":
-            self._history_next()
-            return
-        
-        if key.name == "left":
-            return
-        
-        if key.name == "right":
+            if self._autocomplete_options:
+                self._autocomplete_index = (self._autocomplete_index + 1) % len(self._autocomplete_options)
+                self._render_autocomplete()
+            else:
+                self._history_next()
             return
         
         if key.name == "tab":
-            self._handle_tab_complete()
+            if self._autocomplete_options:
+                self._select_autocomplete()
+            else:
+                self._handle_tab_complete()
             return
         
-        if key.name == "home":
-            self.state.input_buffer = ""
-            self._render_input_line()
+        if key.name == "ctrl_r":
+            self._toggle_search()
             return
         
         if len(key.value) == 1 and not key.meta:
             self.state.input_buffer += key.value
+            self._update_autocomplete()
+            self._render_input_line()
+    
+    def _cycle_sidebar_panel(self):
+        """Cycle through sidebar panels"""
+        panels = list(SidebarPanel)
+        idx = panels.index(self._sidebar_panel)
+        self._sidebar_panel = panels[(idx + 1) % len(panels)]
+    
+    def _toggle_file_tree(self):
+        """Toggle file tree panel"""
+        if self._sidebar_panel == SidebarPanel.FILES:
+            self._sidebar_panel = SidebarPanel.SESSION
+        else:
+            self._sidebar_panel = SidebarPanel.FILES
+            self._refresh_file_tree()
+    
+    def _toggle_search(self):
+        """Toggle search mode"""
+        self._search_mode = not self._search_mode
+        if self._search_mode:
+            self._search_query = ""
+    
+    def _update_autocomplete(self):
+        """Update autocomplete options"""
+        partial = self.state.input_buffer.lower()
+        
+        if not partial or len(partial) < 2:
+            self._autocomplete_options = []
+            return
+        
+        commands = [
+            "ask", "agents", "clear", "config", "exit", "help", "run", 
+            "status", "task", "tasks", "tool", "tools", "chat"
+        ]
+        
+        tools = []
+        try:
+            from services.tools import get_executor
+            executor = get_executor()
+            tools = executor.list_tools()
+        except:
+            pass
+        
+        options = commands + tools
+        
+        self._autocomplete_options = [o for o in options if o.startswith(partial)]
+        self._autocomplete_index = 0
+    
+    def _render_autocomplete(self):
+        """Render autocomplete options"""
+        if not self._autocomplete_options:
+            return
+        
+        content_width = self.width - self.sidebar_width - 1 if self._show_sidebar else self.width
+        move_cursor(1, self.height - 3)
+        write(" " * content_width)
+        move_cursor(1, self.height - 3)
+        
+        options_text = " | ".join(self._autocomplete_options[:5])
+        write(style(options_text, color="yellow", dim=True))
+    
+    def _select_autocomplete(self):
+        """Select autocomplete option"""
+        if self._autocomplete_options:
+            selected = self._autocomplete_options[self._autocomplete_index]
+            
+            if ' ' not in self.state.input_buffer:
+                self.state.input_buffer = selected + " "
+            else:
+                self.state.input_buffer = selected
+            
+            self._autocomplete_options = []
             self._render_input_line()
     
     def _render_input_line(self):
         """Render the input line"""
-        move_cursor(1, self.height)
-        write(" " * self.width)
-        move_cursor(1, self.height)
+        content_width = self.width - self.sidebar_width - 1 if self._show_sidebar else self.width
+        
+        move_cursor(1, self.height - 1)
+        write(" " * content_width)
+        move_cursor(1, self.height - 1)
         
         prompt = style("> ", color="green", bold=True)
-        input_text = self.state.input_buffer
+        input_text = self.state.input_buffer[:content_width - 2]
         
         if self._thinking:
             prompt = style("◌ ", color="cyan", blink=True)
         
+        if self._search_mode:
+            prompt = style("/", color="yellow")
+            input_text = self._search_query + "_"
+        
         write(prompt + input_text)
+        
+        if self._autocomplete_options:
+            self._render_autocomplete()
     
     def _execute_input(self):
         """Execute input command"""
+        if self._search_mode:
+            self._perform_search()
+            return
+        
         cmd = self.state.input_buffer.strip()
         
         if not cmd:
@@ -292,8 +388,22 @@ class BeautifulTUI:
         self.state.input_buffer = ""
         
         self._add_message("user", cmd)
-        
         self._process_command(cmd)
+    
+    def _perform_search(self):
+        """Perform search in messages"""
+        query = self.state.input_buffer.strip()
+        self._search_query = query
+        self._search_mode = False
+        
+        if query:
+            results = [m for m in self.messages if query.lower() in m.content.lower()]
+            
+            msg = f"Found {len(results)} results for '{query}':\n"
+            for m in results[:5]:
+                msg += f"  {m.role}: {m.content[:50]}...\n"
+            
+            self._add_message("system", msg)
     
     def _process_command(self, cmd: str):
         """Process user command"""
@@ -323,8 +433,24 @@ class BeautifulTUI:
             self._run_shell(args)
         elif command == "tool":
             self._run_tool(args)
+        elif command == "cd":
+            self._change_directory(args)
         else:
             self._handle_aiAsk(cmd)
+    
+    def _change_directory(self, path: str):
+        """Change directory"""
+        if not path:
+            path = os.path.expanduser("~")
+        
+        try:
+            os.chdir(path)
+            self.context.cwd = os.getcwd()
+            self._refresh_file_tree()
+            self._update_status_bar()
+            self._add_message("system", f"Changed directory to: {self.context.cwd}")
+        except Exception as e:
+            self._add_message("error", f"Error: {str(e)}")
     
     def _handle_aiAsk(self, prompt: str):
         """Handle AI ask command"""
@@ -340,7 +466,7 @@ class BeautifulTUI:
         thread.start()
     
     def _async_ai_ask(self, prompt: str):
-        """Async AI ask in background"""
+        """Async AI ask"""
         try:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
@@ -352,7 +478,7 @@ class BeautifulTUI:
             self._needs_render = True
     
     async def _call_ai(self, prompt: str):
-        """Call AI API"""
+        """Call AI"""
         from services.api import create_client, Backend
         from services.tools import get_executor
         
@@ -403,19 +529,19 @@ class BeautifulTUI:
         self._needs_render = True
     
     def _add_message(self, role: str, content: str):
-        """Add a message to the chat"""
+        """Add message"""
         msg = ChatMessage(role=role, content=content, timestamp=time.time())
         self.messages.append(msg)
         self._render_messages()
     
     def _add_tool_use(self, name: str, input_data: Dict):
-        """Add a tool use to display"""
+        """Add tool use"""
         tool_use = ToolUse(name=name, input_data=input_data, status="running")
         self._tool_uses.append(tool_use)
         self._render_messages()
     
     def _complete_tool_use(self, name: str, result: str, error: bool = False):
-        """Complete a tool use"""
+        """Complete tool use"""
         for tool in self._tool_uses:
             if tool.name == name and tool.status == "running":
                 tool.status = "completed" if not error else "error"
@@ -430,26 +556,35 @@ class BeautifulTUI:
 
 AI & Chat:
   ask <msg>      - Chat with AI
-  chat          - Start conversation mode
-  agents        - List available agents
+  agents        - List agents
 
-Tools:
-  tool <name>   - Run a specific tool
-  tools         - List all tools
+Tools & Shell:
+  tool <name>   - Run tool
+  tools         - List tools
+  run <cmd>     - Execute shell
+  !<cmd>        - Shell shortcut
 
-Shell:
-  run <cmd>     - Execute shell command
-  !<cmd>        - Execute shell command (shortcut)
+Navigation:
+  cd <dir>      - Change directory
 
 Tasks:
-  task create   - Create a new task
-  task list     - List all tasks
+  task create   - Create task
+  task list     - List tasks
 
-Other:
-  status        - Show current status
-  clear         - Clear conversation
-  help          - Show this help
-  exit          - Exit
+Session:
+  status        - Show status
+  clear         - Clear chat
+
+=== Keyboard Shortcuts ===
+  Ctrl+C   Exit
+  Ctrl+L   Clear screen
+  Ctrl+G   Toggle sidebar
+  Ctrl+S   Cycle sidebar panel
+  Ctrl+F   File tree
+  Ctrl+R   Search
+  Ctrl+T   Toggle thinking
+  Up/Down  History
+  Tab      Autocomplete
 """
         self._add_message("system", help_text)
     
@@ -495,7 +630,6 @@ Other:
         if not cmd:
             return
         
-        import subprocess
         try:
             result = subprocess.run(
                 cmd, shell=True, capture_output=True, text=True, timeout=30
@@ -506,7 +640,7 @@ Other:
             self._add_message("error", f"Error: {str(e)}")
     
     def _run_tool(self, args: str):
-        """Run a tool"""
+        """Run tool"""
         if not args:
             self._add_message("system", "Usage: tool <name> [args...]")
             return
@@ -535,7 +669,7 @@ Other:
         self._add_message("system", f"Tool: {tool_name}\n{output}")
     
     def _handle_tab_complete(self):
-        """Handle tab completion"""
+        """Tab completion"""
         partial = self.state.input_buffer
         
         from commands import get_commands
@@ -551,12 +685,12 @@ Other:
             if not partial:
                 self.state.input_buffer = f"/{cmd} "
             else:
-                self.state.input_buffer = cmd
+                self.state.input_buffer = cmd + " "
         
         self._render_input_line()
     
     def _history_previous(self):
-        """Go to previous history item"""
+        """History previous"""
         if self.state.history:
             if self.state.history_index < len(self.state.history) - 1:
                 self.state.history_index += 1
@@ -566,7 +700,7 @@ Other:
                 self._render_input_line()
     
     def _history_next(self):
-        """Go to next history item"""
+        """History next"""
         if self.state.history and self.state.history_index > 0:
             self.state.history_index -= 1
             idx = len(self.state.history) - 1 - self.state.history_index
@@ -579,15 +713,22 @@ Other:
             self._render_input_line()
     
     def _render(self):
-        """Render the UI"""
+        """Render UI"""
         clear_screen()
-        self._draw_header()
-        self._render_messages()
-        self._draw_input_prompt()
-        self._draw_status_bar()
+        
+        content_width = self.width - self.sidebar_width - 1 if self._show_sidebar else self.width
+        
+        self._draw_header(content_width)
+        self._render_messages(content_width)
+        self._draw_input_prompt(content_width)
+        self._draw_status_bar(content_width)
+        
+        if self._show_sidebar:
+            self._render_sidebar()
+        
         self._render_input_line()
     
-    def _render_messages(self):
+    def _render_messages(self, width: int):
         """Render messages"""
         start_row = 3
         
@@ -595,38 +736,231 @@ Other:
         
         for msg in self.messages[-20:]:
             if msg.role == "user":
-                line = style("You: ", color="green", bold=True) + msg.content[:100]
+                line = style("You: ", color="green", bold=True) + msg.content[:width-10]
             elif msg.role == "assistant":
-                line = style("Galaxy: ", color="cyan", bold=True) + msg.content[:100]
+                line = style("Galaxy: ", color="cyan", bold=True) + msg.content[:width-10]
             elif msg.role == "error":
-                line = style("Error: ", color="red", bold=True) + msg.content[:100]
+                line = style("Error: ", color="red", bold=True) + msg.content[:width-10]
             else:
-                line = style(msg.content, dim=True)
+                line = style(msg.content[:width-5], dim=True)
             
-            write_line(line[:self.width - 2])
+            write_line(line[:width - 2])
         
         for tool in self._tool_uses[-5:]:
             status_color = "green" if tool.status == "completed" else "yellow" if tool.status == "running" else "red"
             line = f"  ◉ {style(tool.name, color=status_color)}"
             if tool.result:
-                line += f" → {tool.result[:50]}..."
-            write_line(line)
+                line += f" → {tool.result[:30]}..."
+            write_line(line[:width - 2])
     
-    def _draw_header(self):
+    def _render_sidebar(self):
+        """Render sidebar"""
+        sidebar_x = self.width - self.sidebar_width + 1
+        
+        move_cursor(sidebar_x, 1)
+        write(style("│", color="gray"))
+        
+        for i in range(2, self.height):
+            move_cursor(sidebar_x, i)
+            write(style("│", color="gray"))
+        
+        if self._sidebar_panel == SidebarPanel.SESSION:
+            self._render_session_panel(sidebar_x)
+        elif self._sidebar_panel == SidebarPanel.TOOLS:
+            self._render_tools_panel(sidebar_x)
+        elif self._sidebar_panel == SidebarPanel.FILES:
+            self._render_files_panel(sidebar_x)
+        elif self._sidebar_panel == SidebarPanel.GIT:
+            self._render_git_panel(sidebar_x)
+        elif self._sidebar_panel == SidebarPanel.HELP:
+            self._render_help_panel(sidebar_x)
+    
+    def _render_session_panel(self, x: int):
+        """Render session panel"""
+        y = 2
+        
+        move_cursor(x, y)
+        write(style(" Session ", bg_color="blue", color="white", bold=True))
+        
+        y += 2
+        move_cursor(x, y)
+        write(style(f"Dir:", color="gray"))
+        move_cursor(x + 5, y)
+        write(os.path.basename(self.context.cwd)[:self.sidebar_width - 6])
+        
+        y += 1
+        move_cursor(x, y)
+        write(style(f"Backend:", color="gray"))
+        move_cursor(x + 8, y)
+        write(style(self.context.backend, color="cyan"))
+        
+        y += 1
+        move_cursor(x, y)
+        write(style(f"Model:", color="gray"))
+        move_cursor(x + 7, y)
+        write(self.context.model[:self.sidebar_width - 8])
+        
+        y += 2
+        move_cursor(x, y)
+        write(style(" Shortcuts ", bg_color="magenta", color="white"))
+        
+        shortcuts = [
+            ("Ctrl+G", "Sidebar"),
+            ("Ctrl+S", "Panel"),
+            ("Ctrl+F", "Files"),
+            ("Ctrl+R", "Search"),
+            ("Ctrl+T", "Think"),
+        ]
+        
+        y += 1
+        for key, desc in shortcuts:
+            move_cursor(x, y)
+            write(style(f"{key}:", color="yellow"))
+            move_cursor(x + 7, y)
+            write(desc[:self.sidebar_width - 8])
+            y += 1
+    
+    def _render_tools_panel(self, x: int):
+        """Render tools panel"""
+        y = 2
+        
+        move_cursor(x, y)
+        write(style(" Tools ", bg_color="blue", color="white", bold=True))
+        
+        y += 2
+        
+        try:
+            from services.tools import get_executor
+            executor = get_executor()
+            tools = sorted(executor.list_tools())[:20]
+        except:
+            tools = []
+        
+        for tool in tools[:self.height - 6]:
+            move_cursor(x, y)
+            write(f"  {tool[:self.sidebar_width - 4]}")
+            y += 1
+    
+    def _render_files_panel(self, x: int):
+        """Render files panel"""
+        y = 2
+        
+        move_cursor(x, y)
+        write(style(" Files ", bg_color="blue", color="white", bold=True))
+        
+        y += 1
+        
+        self._render_tree(x, y, self._file_tree_cache, 0)
+    
+    def _render_tree(self, x: int, y: int, node: Dict, indent: int):
+        """Render file tree"""
+        prefix = "  " * indent
+        
+        if node["type"] == "dir":
+            move_cursor(x, y)
+            write(prefix + style("📁 ", color="yellow") + node["name"][:self.sidebar_width - indent - 4])
+            y += 1
+            
+            for child in node.get("children", [])[:5]:
+                y = self._render_tree(x, y, child, indent + 1)
+        else:
+            move_cursor(x, y)
+            write(prefix + style("📄 ", color="gray") + node["name"][:self.sidebar_width - indent - 4])
+            y += 1
+        
+        return y
+    
+    def _render_git_panel(self, x: int):
+        """Render git panel"""
+        y = 2
+        
+        move_cursor(x, y)
+        write(style(" Git ", bg_color="blue", color="white", bold=True))
+        
+        y += 2
+        
+        try:
+            result = subprocess.run(
+                ["git", "status", "--porcelain"],
+                cwd=self.context.cwd, capture_output=True, text=True
+            )
+            
+            if result.stdout:
+                changes = result.stdout.strip().split("\n")
+                
+                for change in changes[:self.height - 8]:
+                    if change.startswith("M"):
+                        write(style(" M ", color="yellow") + change[3:self.sidebar_width - 4])
+                    elif change.startswith("A"):
+                        write(style(" A ", color="green") + change[3:self.sidebar_width - 4])
+                    elif change.startswith("D"):
+                        write(style(" D ", color="red") + change[3:self.sidebar_width - 4])
+                    else:
+                        write(" " + change[:self.sidebar_width - 4])
+                    y += 1
+            else:
+                move_cursor(x, y)
+                write(style("No changes", color="gray"))
+                y += 1
+        except:
+            move_cursor(x, y)
+            write(style("Not a git repo", color="gray"))
+            y += 1
+        
+        y += 1
+        try:
+            result = subprocess.run(
+                ["git", "branch", "--show-current"],
+                cwd=self.context.cwd, capture_output=True, text=True
+            )
+            branch = result.stdout.strip() or "main"
+            move_cursor(x, y)
+            write(style(f"Branch: ", color="gray") + branch)
+        except:
+            pass
+    
+    def _render_help_panel(self, x: int):
+        """Render help panel"""
+        y = 2
+        
+        move_cursor(x, y)
+        write(style(" Help ", bg_color="blue", color="white", bold=True))
+        
+        y += 2
+        
+        commands = [
+            ("ask <msg>", "Chat with AI"),
+            ("agents", "List agents"),
+            ("tools", "List tools"),
+            ("run <cmd>", "Run shell"),
+            ("tool <n>", "Run tool"),
+            ("cd <dir>", "Change dir"),
+            ("task", "Task commands"),
+            ("status", "Show status"),
+            ("help", "Show help"),
+            ("clear", "Clear chat"),
+        ]
+        
+        for cmd, desc in commands:
+            move_cursor(x, y)
+            write(style(f"{cmd:<12}", color="cyan") + desc[:self.sidebar_width - 14])
+            y += 1
+    
+    def _draw_header(self, width: int):
         """Draw header"""
         header = style(" Galaxy Destroyer ", bg_color="blue", color="white", bold=True)
-        write(header.ljust(self.width))
+        write(header.ljust(width))
         write_line("")
     
-    def _draw_input_prompt(self):
+    def _draw_input_prompt(self, width: int):
         """Draw input prompt"""
         move_cursor(1, self.height - 1)
-        write(" " * self.width)
+        write(" " * width)
         move_cursor(1, self.height - 1)
         prompt = style("> ", color="green", bold=True)
         write(prompt)
     
-    def _draw_status_bar(self):
+    def _draw_status_bar(self, width: int):
         """Draw status bar"""
         move_cursor(1, self.height)
         
@@ -638,16 +972,15 @@ Other:
         if self._loading:
             status_parts.append(style("◌", color="cyan", blink=True) + " thinking")
         
-        if self._vim_mode:
-            status_parts.append(style("VIM", color="magenta"))
+        if self._show_sidebar:
+            status_parts.append(style(f"[{self._sidebar_panel.value.upper()}]", color="magenta"))
         
         status = " | ".join(status_parts)
-        
-        status = status.rjust(self.width)
+        status = status.ljust(width)
         write(status)
     
     def _show_exit(self):
-        """Show exit message"""
+        """Show exit"""
         clear_screen()
         write_line("")
         write_line(style("   Thanks for using Galaxy Destroyer!", color="cyan", bold=True))
@@ -662,5 +995,5 @@ Other:
         write_line("")
     
     def _cleanup(self):
-        """Cleanup on exit"""
+        """Cleanup"""
         pass

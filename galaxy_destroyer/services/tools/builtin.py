@@ -712,7 +712,7 @@ def mcp_list_resources(server: str = "", _context: Any = None) -> Dict:
     parameters={
         "type": "object",
         "properties": {
-            "uri": {"type": "string", "description": "Resource URI (e.g., mcp://server/resource")"}
+            "uri": {"type": "string", "description": "Resource URI (e.g. mcp://server/resource)"}
         },
         "required": ["uri"]
     }

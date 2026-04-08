@@ -127,6 +127,63 @@ def erase_display():
     sys.stdout.flush()
 
 
+def write(text: str = ""):
+    """Write text"""
+    sys.stdout.write(text)
+    sys.stdout.flush()
+
+
+def write_line(text: str = ""):
+    """Write line"""
+    try:
+        sys.stdout.write(text + "\n")
+        sys.stdout.flush()
+    except:
+        pass
+
+
+def move_cursor(x: int, y: int):
+    """Move cursor to position"""
+    sys.stdout.write(f"\033[{y};{x}H")
+    sys.stdout.flush()
+
+
+def hide_cursor():
+    """Hide cursor"""
+    sys.stdout.write("\033[?25l")
+    sys.stdout.flush()
+
+
+def show_cursor():
+    """Show cursor"""
+    sys.stdout.write("\033[?25h")
+    sys.stdout.flush()
+
+
+def save_cursor():
+    """Save cursor position"""
+    sys.stdout.write("\033[s")
+    sys.stdout.flush()
+
+
+def restore_cursor():
+    """Restore cursor position"""
+    sys.stdout.write("\u001b[u")
+    sys.stdout.flush()
+
+
+def erase_line():
+    """Erase current line"""
+    sys.stdout.write("\033[2K")
+    sys.stdout.flush()
+
+
+def erase_display():
+    """Erase display"""
+    sys.stdout.write("\033[3J")
+    sys.stdout.flush()
+
+
 def style(text: str, bold: bool = False, italic: bool = False, 
           underline: bool = False, color: Optional[str] = None,
           bg_color: Optional[str] = None, dim: bool = False,
@@ -433,6 +490,24 @@ def truncate(text: str, length: int, suffix: str = "...") -> str:
     if len(text) <= length:
         return text
     return text[:length - len(suffix)] + suffix
+
+
+def align_text(text: str, width: int, align: str = "left") -> str:
+    """Align text within width"""
+    text_len = len(text)
+    if text_len >= width:
+        return text[:width]
+    
+    if align == "left":
+        return text + " " * (width - text_len)
+    elif align == "right":
+        return " " * (width - text_len) + text
+    elif align == "center":
+        left = (width - text_len) // 2
+        right = width - text_len - left
+        return " " * left + text + " " * right
+    else:
+        return text
 
 
 def center(text: str, width: int) -> str:

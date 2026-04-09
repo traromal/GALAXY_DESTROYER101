@@ -2,11 +2,18 @@
 
 import os
 import sys
+
+if sys.platform == 'win32':
+    try:
+        sys.stdout.reconfigure(encoding='utf-8')
+        sys.stderr.reconfigure(encoding='utf-8')
+    except:
+        pass
+
 import time
 import asyncio
 import threading
 import subprocess
-import random
 from typing import Optional, List, Dict, Any
 from dataclasses import dataclass, field
 from enum import Enum

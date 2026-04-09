@@ -1,12 +1,37 @@
-"""Tools package"""
-from .registry import ToolRegistry, Tool, ToolParameter, ToolCategory
-from .registry import register_tool, get_tools, execute_tool, list_tools_json
-from .builtin import (
-    read_file, write_file, list_directory, search,
-    run_shell, git_status, git_log, get_config, set_config
+"""Tools package - all built-in tools"""
+
+from .registry import (
+    ToolCategory,
+    ToolParameter,
+    Tool,
+    ToolRegistry,
+    tool_registry,
+    register_tool,
+    get_tools,
+    execute_tool,
+    list_tools_json,
 )
 
 __all__ = [
-    "ToolRegistry", "Tool", "ToolParameter", "ToolCategory",
-    "register_tool", "get_tools", "execute_tool", "list_tools_json",
+    "ToolCategory",
+    "ToolParameter",
+    "Tool",
+    "ToolRegistry",
+    "tool_registry",
+    "register_tool",
+    "get_tools",
+    "execute_tool",
+    "list_tools_json",
 ]
+
+
+def load_all_tools():
+    """Load all tool modules to register their tools"""
+    import galaxy_destroyer.tools.builtin
+    import galaxy_destroyer.tools.task_tools
+    import galaxy_destroyer.tools.web_tools
+    import galaxy_destroyer.tools.agent_tools
+    import galaxy_destroyer.tools.plan_tools
+    import galaxy_destroyer.tools.session_tools
+    import galaxy_destroyer.tools.skill_tools
+    import galaxy_destroyer.tools.mcp_tools
